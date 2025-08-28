@@ -8,7 +8,10 @@ import java.time.LocalDateTime;
 @Entity
 @Data
 @Table(name = "event_registration", 
-       uniqueConstraints = @UniqueConstraint(columnNames = {"event_id", "user_email"}))
+       uniqueConstraints = {
+           @UniqueConstraint(columnNames = {"event_id", "user_email"}),
+           @UniqueConstraint(columnNames = {"unique_code"})
+       })
 public class EventRegistration {
     
     public enum RegistrationStatus {
@@ -29,6 +32,9 @@ public class EventRegistration {
     
     @Column(name = "user_name", nullable = false)
     private String userName;
+    
+    @Column(name = "unique_code", nullable = false, unique = true, length = 6)
+    private String uniqueCode;
     
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)

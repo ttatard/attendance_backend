@@ -1,6 +1,7 @@
 package com.example.attendance.repository;
 
 import com.example.attendance.entity.EventRegistration;
+import com.example.attendance.entity.EventRegistration.RegistrationStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,8 +15,17 @@ public interface EventRegistrationRepository extends JpaRepository<EventRegistra
     // Check if user is registered for event
     boolean existsByEventIdAndUserEmail(Long eventId, String userEmail);
     
+    // Check if unique code exists
+    boolean existsByUniqueCode(String uniqueCode);
+    
     // Find registration by event and user email
     EventRegistration findByEventIdAndUserEmail(Long eventId, String userEmail);
+    
+    // Find registration by event ID and unique code
+    EventRegistration findByEventIdAndUniqueCode(Long eventId, String uniqueCode);
+    
+    // Find registration by unique code only
+    EventRegistration findByUniqueCode(String uniqueCode);
     
     // Find all registrations by user email
     List<EventRegistration> findByUserEmail(String userEmail);
@@ -68,4 +78,15 @@ public interface EventRegistrationRepository extends JpaRepository<EventRegistra
     // Get registration status for user and event
     @Query("SELECT r.status FROM EventRegistration r WHERE r.eventId = :eventId AND r.userEmail = :userEmail")
     Optional<EventRegistration.RegistrationStatus> getRegistrationStatus(@Param("eventId") Long eventId, @Param("userEmail") String userEmail);
+
+    boolean existsByEventIdAndUserEmailAndStatus(Long eventId, String userEmail, RegistrationStatus status);
+    
+    // Find registrations by unique code and status
+    List<EventRegistration> findByUniqueCodeAndStatus(String uniqueCode, RegistrationStatus status);
+    
+    // Check if a unique code is approved for a specific event
+    @Query("SELECT CASE WHEN COUNT(r) > 0 THEN true ELSE false END FROM EventRegistration r WHERE r.eventId = :eventId AND r.uniqueCode = :uniqueCode AND r.status = 'APPROVED'")
+    boolean isCodeApprovedForEvent(@Param("eventId") Long eventId, @Param("uniqueCode") String uniqueCode);
+
+    
 }

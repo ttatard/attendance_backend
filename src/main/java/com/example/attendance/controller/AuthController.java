@@ -1,24 +1,18 @@
 package com.example.attendance.controller;
 
-import com.example.attendance.dto.LoginRequestDto;
-import com.example.attendance.dto.LoginResponseDto;
-import com.example.attendance.dto.UserRegistrationDto;
 import com.example.attendance.dto.*;
-import com.example.attendance.entity.User;
-import com.example.attendance.entity.Organizer;
 import com.example.attendance.exception.DuplicateEmailException;
-import com.example.attendance.exception.OrganizerCreationException;
 import com.example.attendance.service.AuthService;
-import com.example.attendance.service.OrganizerService;
+import com.example.attendance.entity.User;
+import com.example.attendance.service.SystemOwnerService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
@@ -28,121 +22,184 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
-    private final OrganizerService organizerService;
+    private final SystemOwnerService systemOwnerService;
 
+    // Regular user registration
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody UserRegistrationDto registrationDto) {
         try {
-            log.info("Registration attempt for email: {}", registrationDto.getEmail());
-            
-            User user = authService.registerUser(registrationDto);
-            
-            if (user.getAccountType() == User.AccountType.ADMIN) {
-                try {
-                    Organizer organizer = organizerService.createOrganizerForAdmin(user);
-                    log.info("Created organizer profile for admin user: {}", user.getEmail());
-                    
-                    Map<String, Object> response = new HashMap<>();
-                    response.put("user", user);
-                    response.put("organizerId", organizer.getId());
-                    response.put("message", "Admin account and organizer profile created successfully");
-                    
-                    return ResponseEntity.status(HttpStatus.CREATED).body(response);
-                    
-                } catch (OrganizerCreationException e) {
-                    log.error("Organizer creation failed for admin user: {}", e.getMessage(), e);
-                    
-                    Map<String, Object> response = new HashMap<>();
-                    response.put("user", user);
-                    response.put("warning", "Admin account created but organizer profile creation failed");
-                    response.put("error", e.getMessage());
-                    
-                    return ResponseEntity.status(HttpStatus.CREATED).body(response);
-                }
-            }
-            
-            return ResponseEntity.status(HttpStatus.CREATED).body(user);
-            
+            UserResponseDto registeredUser = authService.registerUser(registrationDto);
+            log.info("User registered successfully: {}", registeredUser.getEmail());
+            return ResponseEntity.ok(registeredUser);
         } catch (DuplicateEmailException e) {
-            log.warn("Registration failed - duplicate email: {}", registrationDto.getEmail());
+            log.error("Registration failed - email already exists: {}", registrationDto.getEmail());
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of("error", "Email already exists", "message", e.getMessage()));
+                    .body(Map.of(
+                        "message", "Email already exists",
+                        "email", registrationDto.getEmail()
+                    ));
         } catch (Exception e) {
-            log.error("Registration error for {}: {}", registrationDto.getEmail(), e.getMessage(), e);
+            log.error("Error registering user", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Registration failed", "message", "Please try again later"));
+                    .body(Map.of(
+                        "message", "Error registering user",
+                        "error", e.getMessage()
+                    ));
         }
     }
 
+    // Admin registration (protected endpoint)
+    @PostMapping("/admin/register")
+    @PreAuthorize("hasRole('SYSTEM_OWNER')")
+    public ResponseEntity<?> registerAdmin(@Valid @RequestBody UserRegistrationDto registrationDto) {
+        try {
+            // Force account type to ADMIN
+            registrationDto.setAccountType(User.AccountType.ADMIN);
+            UserResponseDto registeredAdmin = authService.registerUser(registrationDto);
+            log.info("Admin registered successfully: {}", registeredAdmin.getEmail());
+            return ResponseEntity.ok(registeredAdmin);
+        } catch (DuplicateEmailException e) {
+            log.error("Admin registration failed - email already exists: {}", registrationDto.getEmail());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                        "message", "Email already exists",
+                        "email", registrationDto.getEmail()
+                    ));
+        } catch (Exception e) {
+            log.error("Error registering admin", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "message", "Error registering admin",
+                        "error", e.getMessage()
+                    ));
+        }
+    }
+
+    // System owner registration (protected endpoint) - Manual conversion
+    @PostMapping("/system-owner/register")
+    @PreAuthorize("hasRole('SYSTEM_OWNER')")
+    public ResponseEntity<?> registerSystemOwner(@Valid @RequestBody UserRegistrationDto registrationDto) {
+        try {
+            // Assuming systemOwnerService.createSystemOwner returns User entity
+            Object result = systemOwnerService.createSystemOwner(registrationDto);
+            
+            UserResponseDto systemOwner;
+            if (result instanceof User) {
+                User userEntity = (User) result;
+                // Manual conversion from User to UserResponseDto
+                systemOwner = UserResponseDto.builder()
+                    .id(userEntity.getId())
+                    .firstName(userEntity.getFirstName())
+                    .lastName(userEntity.getLastName())
+                    .email(userEntity.getEmail())
+                    .birthday(userEntity.getBirthday())
+                    .gender(userEntity.getGender())
+                    .accountType(userEntity.getAccountType())
+                    .address(userEntity.getAddress())
+                    .spouseName(userEntity.getSpouseName())
+                    .ministry(userEntity.getMinistry())
+                    .apostolate(userEntity.getApostolate())
+                    .isDeactivated(userEntity.isDeactivated())
+                    .isDeleted(userEntity.isDeleted())
+                    .createdAt(userEntity.getCreatedAt())
+                    .updatedAt(userEntity.getUpdatedAt())
+                    .build();
+            } else if (result instanceof UserResponseDto) {
+                systemOwner = (UserResponseDto) result;
+            } else {
+                throw new IllegalStateException("Unexpected return type from createSystemOwner");
+            }
+            
+            log.info("System owner registered successfully: {}", systemOwner.getEmail());
+            return ResponseEntity.ok(systemOwner);
+        } catch (DuplicateEmailException e) {
+            log.error("System owner registration failed - email already exists: {}", registrationDto.getEmail());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                        "message", "Email already exists",
+                        "email", registrationDto.getEmail()
+                    ));
+        } catch (Exception e) {
+            log.error("Error registering system owner", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                        "message", "Error registering system owner",
+                        "error", e.getMessage()
+                    ));
+        }
+    }
+
+    // Login endpoint (common for all users)
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequestDto loginRequest) {
         try {
             log.info("Login attempt for email: {}", loginRequest.getEmail());
             LoginResponseDto response = authService.login(loginRequest);
             
-            if (response.getAccountType() == User.AccountType.ADMIN) {
-                try {
-                    organizerService.findByUserEmail(response.getEmail())
-                        .orElseThrow(() -> new IllegalStateException("Organizer profile not found"));
-                } catch (Exception e) {
-                    log.warn("Admin login but organizer profile missing: {}", response.getEmail());
-                    response.setWarning("Organizer profile not found. Some features may be limited.");
-                }
+            if (response.isDeactivated()) {
+                log.info("Deactivated account login attempt: {}", loginRequest.getEmail());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(
+                            "message", "Account is deactivated",
+                            "email", loginRequest.getEmail(),
+                            "isDeactivated", true
+                        ));
             }
-            
+
+            log.info("Successful login for email: {}", loginRequest.getEmail());
             return ResponseEntity.ok(response);
-        } catch (BadCredentialsException e) {
-            log.warn("Failed login attempt for email: {}", loginRequest.getEmail());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Invalid credentials", "message", "Invalid email or password"));
         } catch (Exception e) {
-            log.error("Login error for {}: {}", loginRequest.getEmail(), e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Login failed", "message", "Please try again later"));
+            log.error("Login error for email: {}", loginRequest.getEmail(), e);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of(
+                        "message", "Invalid credentials",
+                        "email", loginRequest.getEmail(),
+                        "isDeactivated", false
+                    ));
         }
     }
 
-    @GetMapping("/verify")
-    public ResponseEntity<?> verifyToken(@RequestHeader("Authorization") String token) {
+    // Get current user
+    @GetMapping("/me")
+    public ResponseEntity<?> getCurrentUser(@RequestHeader("Authorization") String token) {
         try {
-            if (token == null || !token.startsWith("Bearer ")) {
-                throw new BadCredentialsException("Invalid token format");
-            }
-            
-            String jwtToken = token.substring(7);
-            LoginResponseDto response = authService.verifyToken(jwtToken);
-            
-            if (response.getAccountType() == User.AccountType.ADMIN) {
-                try {
-                    organizerService.findByUserEmail(response.getEmail())
-                        .orElseThrow(() -> new IllegalStateException("Organizer profile not found"));
-                } catch (Exception e) {
-                    log.warn("Admin token verification but organizer profile missing: {}", response.getEmail());
-                    response.setWarning("Organizer profile not found. Some features may be limited.");
-                }
-            }
-            
-            return ResponseEntity.ok(response);
-            
-        } catch (BadCredentialsException e) {
-            log.warn("Token verification failed: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Invalid token", "message", e.getMessage()));
+            LoginResponseDto userResponse = authService.verifyToken(token.substring(7));
+            return ResponseEntity.ok(userResponse);
         } catch (Exception e) {
-            log.error("Token verification error: {}", e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Token verification failed", "message", "Please try again"));
+            log.error("Error fetching user data", e);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body("Invalid or expired token");
         }
     }
 
-    @PostMapping("/logout")
-    public ResponseEntity<String> logout() {
-        log.info("Logout request received");
+    @PutMapping("/me/password")
+    public ResponseEntity<?> changePassword(
+            @RequestHeader("Authorization") String token,
+            @Valid @RequestBody ChangePasswordDto changePasswordDto) {
         try {
-            return ResponseEntity.ok("Logout successful");
+            LoginResponseDto userResult = authService.verifyToken(token.substring(7));
+            String userEmail = userResult.getEmail();
+            
+            authService.changePassword(userEmail, 
+                                     changePasswordDto.getCurrentPassword(), 
+                                     changePasswordDto.getNewPassword());
+            return ResponseEntity.ok("Password changed successfully");
         } catch (Exception e) {
-            log.error("Logout failed: {}", e.getMessage());
-            return ResponseEntity.internalServerError().body("Logout failed");
+            log.error("Error changing password", e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/reactivate")
+    public ResponseEntity<?> reactivateAccount(@RequestBody ReactivationRequest request) {
+        try {
+            LoginResponseDto response = authService.reactivateAccount(request);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Reactivation failed for email: {}", request.getEmail(), e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("Reactivation failed: " + e.getMessage());
         }
     }
 }

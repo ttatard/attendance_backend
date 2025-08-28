@@ -23,7 +23,23 @@ public class UserAttendanceDto {
         dto.setEventName(event.getName());
         dto.setEventDate(event.getDate());
         dto.setEventPlace(event.getPlace());
-        dto.setAttendanceDate(attendance.getAttendanceDate());
+        
+        // Fixed: Convert LocalDate to LocalDateTime if needed
+        // If the attendance.getAttendanceDate() returns LocalDateTime, use it directly
+        // If it returns LocalDate, convert it to LocalDateTime
+        if (attendance.getAttendanceDate() != null) {
+            // Check if getAttendanceDate() returns LocalDateTime or LocalDate
+            Object attendanceDate = attendance.getAttendanceDate();
+            if (attendanceDate instanceof LocalDateTime) {
+                dto.setAttendanceDate((LocalDateTime) attendanceDate);
+            } else if (attendanceDate instanceof LocalDate) {
+                dto.setAttendanceDate(((LocalDate) attendanceDate).atStartOfDay());
+            }
+        } else if (event.getDate() != null) {
+            // If attendance date is null but event date exists, use event date at start of day
+            dto.setAttendanceDate(event.getDate().atStartOfDay());
+        }
+        
         return dto;
     }
 }

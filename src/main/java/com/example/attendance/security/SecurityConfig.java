@@ -46,7 +46,15 @@ public class SecurityConfig {
                 .requestMatchers("/api/events/verify-qr/**").permitAll()        // Public QR code verification
                 .requestMatchers("/h2-console/**").permitAll()                  // H2 console (development only)
                 .requestMatchers("/actuator/health").permitAll()                // Health check endpoint
+                .requestMatchers("/api/health").permitAll()                     // Custom health endpoint
                 .requestMatchers("/error").permitAll()                          // Error page
+                
+                // Static file serving - CRITICAL ADDITION
+                .requestMatchers("/uploads/**").permitAll()                     // Allow static file access
+                
+                // System owner only endpoints - these require authentication AND role check
+                .requestMatchers("/api/system/**").authenticated()              // System settings (role checked by @PreAuthorize)
+                .requestMatchers("/api/upload/**").authenticated()              // File uploads (role checked by @PreAuthorize)
                 
                 // Protected endpoints - authentication required
                 .requestMatchers("/api/events/**").authenticated()              // All other event endpoints
@@ -83,8 +91,8 @@ public class SecurityConfig {
         // Allow requests from your React app
         configuration.setAllowedOriginPatterns(List.of("http://localhost:3000", "http://127.0.0.1:3000"));
         
-        // Allow all HTTP methods
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        // Allow all HTTP methods including HEAD for image loading
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"));
         
         // Allow all headers
         configuration.setAllowedHeaders(Arrays.asList("*"));

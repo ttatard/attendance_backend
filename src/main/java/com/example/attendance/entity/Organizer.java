@@ -4,13 +4,15 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "organizers")
-@Data  // This includes @Getter, @Setter, @ToString, @EqualsAndHashCode
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -51,12 +53,14 @@ public class Organizer {
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false, unique = true)
+    @JsonIgnore
     private User user;
 
-    @OneToMany(mappedBy = "enrolledOrganization", cascade = CascadeType.ALL, orphanRemoval = true)
+    @ManyToMany(mappedBy = "enrolledOrganizations", fetch = FetchType.LAZY)
     @Builder.Default
-    private List<User> enrolledUsers = new ArrayList<>();
+    private Set<User> enrolledUsers = new HashSet<>();
 
+    // Business methods
     public String getFullName() {
         if (user != null) {
             return user.getFirstName() + " " + user.getLastName();
@@ -71,13 +75,67 @@ public class Organizer {
         return getFullName();
     }
 
+    // FIXED: Return mutable sets and allow modification
+    public Set<User> getEnrolledUsers() {
+        if (enrolledUsers == null) {
+            enrolledUsers = new HashSet<>();
+        }
+        return enrolledUsers;
+    }
+
+    // FIXED: Allow setting enrolled users
+    public void setEnrolledUsers(Set<User> enrolledUsers) {
+        this.enrolledUsers = enrolledUsers != null ? enrolledUsers : new HashSet<>();
+    }
+
+    // Relationship management methods
     public void addEnrolledUser(User user) {
-        enrolledUsers.add(user);
-        user.setEnrolledOrganization(this);
+        if (user == null) {
+            throw new IllegalArgumentException("User cannot be null");
+        }
+        if (this.enrolledUsers == null) {
+            this.enrolledUsers = new HashSet<>();
+        }
+        this.enrolledUsers.add(user);
+        
+        // Ensure bidirectional relationship
+        if (user.getEnrolledOrganizations() != null) {
+            user.getEnrolledOrganizations().add(this);
+        }
     }
 
     public void removeEnrolledUser(User user) {
-        enrolledUsers.remove(user);
-        user.setEnrolledOrganization(null);
+        if (user == null) {
+            throw new IllegalArgumentException("User cannot be null");
+        }
+        if (this.enrolledUsers != null) {
+            this.enrolledUsers.remove(user);
+        }
+        
+        // Ensure bidirectional relationship
+        if (user.getEnrolledOrganizations() != null) {
+            user.getEnrolledOrganizations().remove(this);
+        }
+    }
+
+    public boolean hasEnrolledUser(User user) {
+        if (user == null || this.enrolledUsers == null) {
+            return false;
+        }
+        return this.enrolledUsers.contains(user);
+    }
+
+    // Proper equals and hashCode implementations
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Organizer organizer = (Organizer) o;
+        return id != null && id.equals(organizer.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

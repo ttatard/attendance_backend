@@ -11,10 +11,12 @@ import com.example.attendance.security.JwtTokenProvider;
 import com.example.attendance.service.AuthService;
 import com.example.attendance.service.OrganizerService;
 import com.example.attendance.service.UserEventService;
+import com.example.attendance.service.SystemOwnerService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,10 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -40,7 +39,8 @@ public class UserController {
     private final AuthService authService;
     private final OrganizerService organizerService;
     private final OrganizerRepository organizerRepository;
-    private final UserEventService userEventService; // Add this missing dependency
+    private final UserEventService userEventService;
+    private final SystemOwnerService systemOwnerService;
 
     @GetMapping("/me")
     public ResponseEntity<?> getCurrentUser(@RequestHeader("Authorization") String token) {
@@ -83,14 +83,19 @@ public class UserController {
             response.put("isDeleted", user.isDeleted());
             response.put("isDeactivated", user.isDeactivated());
             
-            // Add enrolled organization information
-            if (user.getEnrolledOrganization() != null) {
-                Map<String, Object> enrolledOrgMap = new HashMap<>();
-                enrolledOrgMap.put("id", user.getEnrolledOrganization().getId());
-                enrolledOrgMap.put("organizationName", user.getEnrolledOrganization().getOrganizationName());
-                response.put("enrolledOrganization", enrolledOrgMap);
+            // Add enrolled organizations information
+            if (!user.getEnrolledOrganizations().isEmpty()) {
+                List<Map<String, Object>> enrolledOrgs = user.getEnrolledOrganizations().stream()
+                    .map(org -> {
+                        Map<String, Object> orgMap = new HashMap<>();
+                        orgMap.put("id", org.getId());
+                        orgMap.put("organizationName", org.getOrganizationName());
+                        return orgMap;
+                    })
+                    .collect(Collectors.toList());
+                response.put("enrolledOrganizations", enrolledOrgs);
             } else {
-                response.put("enrolledOrganization", null);
+                response.put("enrolledOrganizations", Collections.emptyList());
             }
             
             return ResponseEntity.ok(response);
@@ -101,7 +106,6 @@ public class UserController {
         }
     }
 
-    // REMOVED DUPLICATE METHOD - keeping only one version
     @GetMapping("/me/attended-events")
     public ResponseEntity<?> getMyAttendedEvents(@RequestHeader("Authorization") String token) {
         try {
@@ -111,9 +115,8 @@ public class UserController {
             
             List<UserEventAttendance> attendances = userEventService.getUserAttendedEvents(user.getId());
             
-            // Convert to DTO if you have a conversion method
             List<UserAttendanceDto> attendanceDtos = attendances.stream()
-                    .map(UserAttendanceDto::fromEntity) // Make sure this method exists in UserAttendanceDto
+                    .map(UserAttendanceDto::fromEntity)
                     .collect(Collectors.toList());
             
             return ResponseEntity.ok(attendanceDtos);
@@ -143,13 +146,12 @@ public class UserController {
 
             List<UserResponseDto> userDtos = users.stream()
                 .map(user -> {
-                    UserResponseDto.EnrolledOrganizationDto enrolledOrgDto = null;
-                    if (user.getEnrolledOrganization() != null) {
-                        enrolledOrgDto = UserResponseDto.EnrolledOrganizationDto.builder()
-                            .id(user.getEnrolledOrganization().getId())
-                            .organizationName(user.getEnrolledOrganization().getOrganizationName())
-                            .build();
-                    }
+                    Set<UserResponseDto.EnrolledOrganizationDto> enrolledOrgDtos = user.getEnrolledOrganizations().stream()
+                        .map(org -> UserResponseDto.EnrolledOrganizationDto.builder()
+                            .id(org.getId())
+                            .organizationName(org.getOrganizationName())
+                            .build())
+                        .collect(Collectors.toSet());
                     
                     return UserResponseDto.builder()
                         .id(user.getId())
@@ -160,7 +162,7 @@ public class UserController {
                         .ministry(user.getMinistry())
                         .apostolate(user.getApostolate())
                         .isDeactivated(user.isDeactivated())
-                        .enrolledOrganization(enrolledOrgDto)
+                        .enrolledOrganizations(enrolledOrgDtos)
                         .build();
                 })
                 .collect(Collectors.toList());
@@ -173,14 +175,14 @@ public class UserController {
         }
     }
 
-    @PostMapping("/{userId}/enroll")
+ @PostMapping("/{userId}/enroll")
+    @Transactional
     public ResponseEntity<?> enrollUser(
         @PathVariable Long userId,
         @RequestBody EnrollRequest enrollRequest,
         @RequestHeader("Authorization") String token) {
         
         try {
-            // Validate token and check if admin
             String email = jwtTokenProvider.extractUsername(token.substring(7));
             User adminUser = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BadCredentialsException("User not found"));
@@ -190,20 +192,14 @@ public class UserController {
                     .body(Map.of("error", "Access denied"));
             }
             
-            // Validate request body
             if (enrollRequest.getOrganizationId() == null) {
                 return ResponseEntity.badRequest()
                     .body(Map.of("error", "Organization ID is required"));
             }
 
-            // Get the organizer (organization)
-            Optional<Organizer> organizer = organizerRepository.findById(enrollRequest.getOrganizationId());
-            if (organizer.isEmpty()) {
-                return ResponseEntity.badRequest()
-                    .body(Map.of("error", "Organization not found"));
-            }
+            Organizer organizer = organizerRepository.findById(enrollRequest.getOrganizationId())
+                .orElseThrow(() -> new BadCredentialsException("Organization not found"));
 
-            // Get user to enroll
             User userToEnroll = userRepository.findById(userId)
                 .orElseThrow(() -> new BadCredentialsException("User not found"));
             
@@ -212,73 +208,105 @@ public class UserController {
                     .body(Map.of("error", "Account not found"));
             }
             
-            // Check enrollment status
-            if (userToEnroll.getEnrolledOrganization() != null) {
-                if (userToEnroll.getEnrolledOrganization().getId().equals(enrollRequest.getOrganizationId())) {
-                    return ResponseEntity.badRequest()
-                        .body(Map.of("error", "User already enrolled in this organization"));
-                }
+            // Direct access to mutable collections
+            Set<Organizer> userOrgs = userToEnroll.getEnrolledOrganizations();
+            Set<User> orgUsers = organizer.getEnrolledUsers();
+            
+            // Check if already enrolled
+            boolean alreadyEnrolled = userOrgs.stream()
+                .anyMatch(org -> org.getId().equals(organizer.getId()));
+            
+            if (alreadyEnrolled) {
                 return ResponseEntity.badRequest()
-                    .body(Map.of("error", "User already enrolled in another organization"));
+                    .body(Map.of("error", "User already enrolled in this organization"));
             }
             
-            // Enroll the user
-            userToEnroll.setEnrolledOrganization(organizer.get());
+            // Add to collections
+            userOrgs.add(organizer);
+            orgUsers.add(userToEnroll);
+            
+            // Save both entities
             userRepository.save(userToEnroll);
+            organizerRepository.save(organizer);
+            
+            log.info("Successfully enrolled user {} in organization {}", userId, enrollRequest.getOrganizationId());
             
             return ResponseEntity.ok(Map.of(
                 "message", "User enrolled successfully",
                 "userId", userToEnroll.getId(),
-                "organizationId", organizer.get().getId()
+                "organizationId", organizer.getId()
             ));
+            
         } catch (Exception e) {
-            log.error("Error enrolling user", e);
+            log.error("Error enrolling user {} in organization {}: {}", 
+                     userId, enrollRequest.getOrganizationId(), e.getMessage(), e);
             return ResponseEntity.internalServerError()
                 .body(Map.of("error", "Error enrolling user: " + e.getMessage()));
         }
     }
 
-    @PostMapping("/{userId}/unenroll")
+@PostMapping("/{userId}/unenroll")
+    @Transactional
     public ResponseEntity<?> unenrollUser(
-            @PathVariable Long userId,
-            @RequestHeader("Authorization") String token) {
+        @PathVariable Long userId,
+        @RequestBody EnrollRequest enrollRequest,
+        @RequestHeader("Authorization") String token) {
+        
         try {
-            // Validate token and check if admin
             String email = jwtTokenProvider.extractUsername(token.substring(7));
             User adminUser = userRepository.findByEmail(email)
-                    .orElseThrow(() -> new BadCredentialsException("User not found"));
+                .orElseThrow(() -> new BadCredentialsException("User not found"));
             
             if (adminUser.getAccountType() != User.AccountType.ADMIN) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Access denied"));
             }
             
-            // Get the organizer (organization) that this admin belongs to
-            Organizer adminOrganizer = organizerService.findByUser(adminUser)
-                    .orElseThrow(() -> new BadCredentialsException("Admin is not an organizer"));
-            
-            // Get user to unenroll
+            if (enrollRequest.getOrganizationId() == null) {
+                return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Organization ID is required"));
+            }
+
+            Organizer organizer = organizerRepository.findById(enrollRequest.getOrganizationId())
+                .orElseThrow(() -> new BadCredentialsException("Organization not found"));
+
             User userToUnenroll = userRepository.findById(userId)
-                    .orElseThrow(() -> new BadCredentialsException("User not found"));
+                .orElseThrow(() -> new BadCredentialsException("User not found"));
             
-            // Check if user is actually enrolled in this organization
-            if (userToUnenroll.getEnrolledOrganization() == null || 
-                !userToUnenroll.getEnrolledOrganization().getId().equals(adminOrganizer.getId())) {
+            // Direct access to mutable collections
+            Set<Organizer> userOrgs = userToUnenroll.getEnrolledOrganizations();
+            Set<User> orgUsers = organizer.getEnrolledUsers();
+            
+            // Check if user is actually enrolled
+            boolean isEnrolled = userOrgs.stream()
+                .anyMatch(org -> org.getId().equals(organizer.getId()));
+                
+            if (!isEnrolled) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body("User is not enrolled in your organization");
+                    .body(Map.of("error", "User is not enrolled in this organization"));
             }
             
-            // Unenroll the user
-            userToUnenroll.setEnrolledOrganization(null);
+            // Remove from collections
+            userOrgs.removeIf(org -> org.getId().equals(organizer.getId()));
+            orgUsers.removeIf(user -> user.getId().equals(userId));
+            
+            // Save both entities
             userRepository.save(userToUnenroll);
+            organizerRepository.save(organizer);
+            
+            log.info("Successfully unenrolled user {} from organization {}", userId, enrollRequest.getOrganizationId());
             
             return ResponseEntity.ok(Map.of(
                 "message", "User unenrolled successfully",
-                "userId", userToUnenroll.getId()
+                "userId", userToUnenroll.getId(),
+                "organizationId", organizer.getId()
             ));
+            
         } catch (Exception e) {
-            log.error("Error unenrolling user", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Error unenrolling user: " + e.getMessage());
+            log.error("Error unenrolling user {} from organization {}: {}", 
+                     userId, enrollRequest.getOrganizationId(), e.getMessage(), e);
+            return ResponseEntity.internalServerError()
+                .body(Map.of("error", "Error unenrolling user: " + e.getMessage()));
         }
     }
 
@@ -362,24 +390,43 @@ public class UserController {
         }
     }
 
-    @PostMapping("/register")
+@PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody UserRegistrationDto registrationDto) {
         try {
-            User registeredUser = authService.registerUser(registrationDto);
-            return ResponseEntity.ok(registeredUser);
+            log.info("Registration attempt for email: {}", registrationDto.getEmail());
+            
+            // Validate that system owner registration is not allowed through this endpoint
+            if (registrationDto.getAccountType() == User.AccountType.SYSTEM_OWNER) {
+                log.warn("Attempted system owner registration through public endpoint");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of(
+                            "message", "System Owner accounts can only be created by existing System Owners",
+                            "error", "FORBIDDEN_ACCOUNT_TYPE"
+                        ));
+            }
+            
+            UserResponseDto registeredUser = authService.registerUser(registrationDto);
+            log.info("User registered successfully: {}", registeredUser.getEmail());
+            
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+                "message", "User registered successfully",
+                "user", registeredUser
+            ));
+            
         } catch (DuplicateEmailException e) {
             log.error("Registration failed - email already exists: {}", registrationDto.getEmail());
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(Map.of(
-                        "message", "Email already exists",
-                        "email", registrationDto.getEmail()
+                        "message", "An account with this email already exists",
+                        "email", registrationDto.getEmail(),
+                        "error", "DUPLICATE_EMAIL"
                     ));
         } catch (Exception e) {
-            log.error("Error registering user", e);
+            log.error("Error registering user: {}", registrationDto.getEmail(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of(
-                        "message", "Error registering user",
-                        "error", e.getMessage()
+                        "message", "Registration failed. Please try again.",
+                        "error", "INTERNAL_SERVER_ERROR"
                     ));
         }
     }
@@ -452,14 +499,20 @@ public class UserController {
             @RequestHeader("Authorization") String token,
             @RequestBody(required = false) Map<String, String> request) {
         
-        String email = jwtTokenProvider.extractUsername(token.substring(7));
-        userRepository.updateDeactivationStatus(email, true);
-        
-        return ResponseEntity.ok(Map.of(
-            "message", "Account deactivated successfully",
-            "email", email,
-            "isDeactivated", true
-        ));
+        try {
+            String email = jwtTokenProvider.extractUsername(token.substring(7));
+            userRepository.updateDeactivationStatus(email, true);
+            
+            return ResponseEntity.ok(Map.of(
+                "message", "Account deactivated successfully",
+                "email", email,
+                "isDeactivated", true
+            ));
+        } catch (Exception e) {
+            log.error("Error deactivating account", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error deactivating account");
+        }
     }
 
     @GetMapping("/check-active")
@@ -467,17 +520,74 @@ public class UserController {
         @RequestParam String email,
         @RequestHeader("Authorization") String token) {
         
-        if (!jwtTokenProvider.validateToken(token.substring(7))) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        try {
+            if (!jwtTokenProvider.validateToken(token.substring(7))) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            }
+
+            User user = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new BadCredentialsException("User not found"));
+
+            return ResponseEntity.ok(Map.of(
+                "email", email,
+                "isDeactivated", user.isDeactivated()
+            ));
+        } catch (Exception e) {
+            log.error("Error checking account status", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Error checking account status");
         }
+    }
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BadCredentialsException("User not found"));
+    @PostMapping("/system-owner/register")
+    @Transactional
+    public ResponseEntity<?> registerSystemOwner(
+            @RequestHeader("Authorization") String token,
+            @Valid @RequestBody UserRegistrationDto registrationDto) {
+        
+        try {
+            // Only existing SYSTEM_OWNER can create new SYSTEM_OWNER
+            String email = jwtTokenProvider.extractUsername(token.substring(7));
+            User requestingUser = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new BadCredentialsException("User not found"));
+            
+            if (requestingUser.getAccountType() != User.AccountType.SYSTEM_OWNER) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Only system owners can create new system owners");
+            }
+            
+            User systemOwner = systemOwnerService.createSystemOwner(registrationDto);
+            return ResponseEntity.ok(systemOwner);
+        } catch (DuplicateEmailException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("message", "Email already exists"));
+        } catch (Exception e) {
+            log.error("Error creating system owner", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error creating system owner");
+        }
+    }
 
-        return ResponseEntity.ok(Map.of(
-            "email", email,
-            "isDeactivated", user.isDeactivated()
-        ));
+    @GetMapping("/system-owners")
+    public ResponseEntity<?> getAllSystemOwners(@RequestHeader("Authorization") String token) {
+        try {
+            // Verify requesting user is SYSTEM_OWNER
+            String email = jwtTokenProvider.extractUsername(token.substring(7));
+            User requestingUser = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new BadCredentialsException("User not found"));
+            
+            if (requestingUser.getAccountType() != User.AccountType.SYSTEM_OWNER) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Access denied");
+            }
+            
+            List<User> systemOwners = userRepository.findByAccountType(User.AccountType.SYSTEM_OWNER);
+            return ResponseEntity.ok(systemOwners);
+        } catch (Exception e) {
+            log.error("Error fetching system owners", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error fetching system owners");
+        }
     }
 
     @PutMapping("/reactivate")

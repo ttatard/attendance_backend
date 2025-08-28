@@ -68,7 +68,7 @@ public class UserEventService {
         return attendanceRepository.findByEventId(eventId);
     }
 
-    public int getEventAttendanceCount(Long eventId) {
+    public long getEventAttendanceCount(Long eventId) {
         log.debug("Counting attendance for event: {}", eventId);
         
         if (!eventRepository.existsById(eventId)) {

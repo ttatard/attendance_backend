@@ -1,18 +1,22 @@
 package com.example.attendance.entity;
+
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "users")
-@Data // This includes @Getter, @Setter, @ToString, @EqualsAndHashCode
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString(exclude = {"organizer", "enrolledOrganization"})
+@ToString(exclude = {"organizer", "enrolledOrganizations"})
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -72,9 +76,14 @@ public class User {
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     private Organizer organizer;
     
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "enrolled_organization_id")
-    private Organizer enrolledOrganization;
+    @ManyToMany
+    @JoinTable(
+        name = "user_organizations",
+        joinColumns = @JoinColumn(name = "user_id"),
+        inverseJoinColumns = @JoinColumn(name = "organization_id")
+    )
+    @Builder.Default
+    private Set<Organizer> enrolledOrganizations = new HashSet<>();
     
     // Custom method to get full name
     public String getName() {
@@ -88,12 +97,62 @@ public class User {
         return "";
     }
     
+    // FIXED: Return mutable sets instead of immutable ones
+    public Set<Organizer> getEnrolledOrganizations() {
+        if (enrolledOrganizations == null) {
+            enrolledOrganizations = new HashSet<>();
+        }
+        return enrolledOrganizations;
+    }
+    
+    // FIXED: Allow setting enrolled organizations
+    public void setEnrolledOrganizations(Set<Organizer> enrolledOrganizations) {
+        this.enrolledOrganizations = enrolledOrganizations != null ? enrolledOrganizations : new HashSet<>();
+    }
+    
+    // Methods to manage organization enrollment
+    public void enrollToOrganization(Organizer organizer) {
+        if (organizer == null) {
+            throw new IllegalArgumentException("Organizer cannot be null");
+        }
+        if (this.enrolledOrganizations == null) {
+            this.enrolledOrganizations = new HashSet<>();
+        }
+        this.enrolledOrganizations.add(organizer);
+        
+        // Ensure bidirectional relationship
+        if (organizer.getEnrolledUsers() != null) {
+            organizer.getEnrolledUsers().add(this);
+        }
+    }
+    
+    public void unenrollFromOrganization(Organizer organizer) {
+        if (organizer == null) {
+            throw new IllegalArgumentException("Organizer cannot be null");
+        }
+        if (this.enrolledOrganizations != null) {
+            this.enrolledOrganizations.remove(organizer);
+        }
+        
+        // Ensure bidirectional relationship
+        if (organizer.getEnrolledUsers() != null) {
+            organizer.getEnrolledUsers().remove(this);
+        }
+    }
+    
+    public boolean isEnrolledInOrganization(Organizer organizer) {
+        if (organizer == null || this.enrolledOrganizations == null) {
+            return false;
+        }
+        return this.enrolledOrganizations.contains(organizer);
+    }
+    
     public enum Gender {
         MALE, FEMALE, OTHER, UNSPECIFIED
     }
     
     public enum AccountType {
-        USER, ADMIN
+        USER, ADMIN, SYSTEM_OWNER
     }
     
     public enum Ministry {
@@ -117,5 +176,19 @@ public class User {
         FORMATION,
         MISSION,
         EVANGELIZATION
+    }
+
+    // Proper equals and hashCode implementations
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        User user = (User) o;
+        return id != null && id.equals(user.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

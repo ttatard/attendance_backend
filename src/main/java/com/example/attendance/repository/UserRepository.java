@@ -35,6 +35,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean isDeactivated(@Param("email") String email);
 
     @Query("SELECT u FROM User u WHERE u.isDeleted = false AND u.accountType = 'USER'")
-List<User> findAllNonAdminUsers();
+    List<User> findAllNonAdminUsers();
 
+    @Query("SELECT u FROM User u WHERE u.isDeleted = false AND u.accountType != 'SYSTEM_OWNER'")
+    List<User> findAllNonSystemOwnerUsers();
+
+    // Add these new methods to fix the compilation errors
+    List<User> findByAccountType(User.AccountType accountType);
+
+    @Query("SELECT u FROM User u WHERE u.isDeleted = false AND u.accountType = :accountType")
+    List<User> findByAccountTypeAndNotDeleted(@Param("accountType") User.AccountType accountType);
+
+    @Query("SELECT u FROM User u WHERE u.isDeleted = false AND u.accountType = 'SYSTEM_OWNER'")
+    List<User> findAllSystemOwners();
 }

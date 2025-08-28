@@ -43,11 +43,12 @@ public class UserEventController {
         return ResponseEntity.ok(attendances);
     }
 
-    @GetMapping("/event/{eventId}/attendance-count")
-    public ResponseEntity<Integer> getEventAttendanceCount(@PathVariable Long eventId) {
-        int count = userEventService.getEventAttendanceCount(eventId);
-        return ResponseEntity.ok(count);
-    }
+    // In UserEventController.java
+@GetMapping("/event/{eventId}/attendance-count")
+public ResponseEntity<Long> getEventAttendanceCount(@PathVariable Long eventId) {
+    long count = userEventService.getEventAttendanceCount(eventId);
+    return ResponseEntity.ok(count);
+}
 
     private Long getUserIdFromAuthentication(Authentication authentication) {
         // Implement logic to get user ID from authentication

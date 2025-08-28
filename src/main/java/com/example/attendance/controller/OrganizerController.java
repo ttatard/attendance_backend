@@ -2,8 +2,10 @@ package com.example.attendance.controller;
 
 import com.example.attendance.entity.Organizer;
 import com.example.attendance.entity.User;
+import com.example.attendance.dto.OrganizerDto;
 import com.example.attendance.repository.UserRepository;
 import com.example.attendance.service.OrganizerService;
+import com.example.attendance.mapper.OrganizerMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -25,40 +28,30 @@ import java.util.List;
 public class OrganizerController {
     private final OrganizerService organizerService;
     private final UserRepository userRepository;
+    private final OrganizerMapper organizerMapper;
 
     @GetMapping
-    public ResponseEntity<List<Organizer>> getAllOrganizers() {
-        try {
-            return ResponseEntity.ok(organizerService.getAllOrganizers());
-        } catch (Exception e) {
-            log.error("Error fetching organizers: {}", e.getMessage());
-            return ResponseEntity.internalServerError().build();
-        }
+    public ResponseEntity<List<OrganizerDto>> getAllOrganizers() {
+        List<OrganizerDto> organizers = organizerService.getAllOrganizers();
+        return ResponseEntity.ok(organizers);
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<?> getOrganizerById(@PathVariable Long id) {
         try {
-            Optional<Organizer> organizer = organizerService.getOrganizerById(id);
-            if (organizer.isPresent()) {
-                return ResponseEntity.ok(organizer.get());
-            } else {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("message", "Organizer not found"));
-            }
+            OrganizerDto organizer = organizerService.getOrganizerById(id);
+            return ResponseEntity.ok(organizer);
         } catch (Exception e) {
-            log.error("Error fetching organizer: {}", e.getMessage());
-            return ResponseEntity.internalServerError()
-                .body(Map.of("error", "Failed to fetch organizer"));
+            return ResponseEntity.notFound().build();
         }
     }
 
     @GetMapping("/by-email/{email}")
     public ResponseEntity<?> getOrganizerByEmail(@PathVariable String email) {
         try {
-            Optional<Organizer> organizer = organizerService.findByUserEmail(email);
-            if (organizer.isPresent()) {
-                return ResponseEntity.ok(organizer.get());
+            Optional<OrganizerDto> organizerOptional = organizerService.findByUserEmail(email);
+            if (organizerOptional.isPresent()) {
+                return ResponseEntity.ok(organizerOptional.get());
             } else {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("message", "Organizer not found"));
@@ -94,37 +87,39 @@ public class OrganizerController {
     }
 
     @GetMapping("/by-user/{userId}")
-public ResponseEntity<?> getOrganizerByUserId(
-    @PathVariable Long userId, 
-    Authentication authentication) {
-    
-    try {
-        // Verify authentication
-        String authenticatedEmail = authentication.getName();
-        User requestingUser = userRepository.findByEmail(authenticatedEmail)
-            .orElseThrow(() -> new BadCredentialsException("User not found"));
-
-        // Find the organizer
-        Optional<Organizer> organizer = organizerService.findByUserId(userId);
+    public ResponseEntity<?> getOrganizerByUserId(
+        @PathVariable Long userId, 
+        Authentication authentication) {
         
-        if (organizer.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of("message", "Organizer not found for this user"));
-        }
+        try {
+            // Verify authentication
+            String authenticatedEmail = authentication.getName();
+            User requestingUser = userRepository.findByEmail(authenticatedEmail)
+                .orElseThrow(() -> new BadCredentialsException("User not found"));
 
-        // Simplified response with only needed fields
-        Map<String, Object> response = new HashMap<>();
-        response.put("id", organizer.get().getId());
-        response.put("organizationName", organizer.get().getOrganizationName());
-        
-        return ResponseEntity.ok()
-            .contentType(MediaType.APPLICATION_JSON)
-            .body(response);
+            // Find the organizer
+            Optional<OrganizerDto> organizerOptional = organizerService.findByUserId(userId);
             
-    } catch (Exception e) {
-        log.error("Error fetching organizer by user ID: {}", userId, e);
-        return ResponseEntity.internalServerError()
-            .body(Map.of("error", "Failed to fetch organizer data"));
+            if (organizerOptional.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "Organizer not found for this user"));
+            }
+
+            OrganizerDto organizer = organizerOptional.get();
+
+            // Simplified response with only needed fields
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", organizer.getId());
+            response.put("organizationName", organizer.getOrganizationName());
+            
+            return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(response);
+                
+        } catch (Exception e) {
+            log.error("Error fetching organizer by user ID: {}", userId, e);
+            return ResponseEntity.internalServerError()
+                .body(Map.of("error", "Failed to fetch organizer data"));
+        }
     }
-}
 }

@@ -1,10 +1,10 @@
 package com.example.attendance.dto;
 
 import com.example.attendance.entity.User;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
+import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.util.Set;
 
 @Data
 @Builder
@@ -15,11 +15,20 @@ public class UserResponseDto {
     private String firstName;
     private String lastName;
     private String email;
+    private LocalDate birthday;
+    private User.Gender gender;
     private User.AccountType accountType;
+    private String address;
+    private String spouseName;
     private User.Ministry ministry;
     private User.Apostolate apostolate;
     private boolean isDeactivated;
-    private EnrolledOrganizationDto enrolledOrganization;
+    private boolean isDeleted;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+
+    @Singular
+    private Set<EnrolledOrganizationDto> enrolledOrganizations;
 
     @Data
     @Builder
